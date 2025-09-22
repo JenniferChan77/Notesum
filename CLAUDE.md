@@ -1,82 +1,96 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code when working with this lecture transcription project.
+
+## Project Overview
+
+**TheraNotes** is a lecture transcriber and summarizer web application that helps students transcribe and summarize audio/video lectures using AI technology.
 
 ## Development Commands
 
-### Core Development
 - `npm run dev` - Start development server on localhost:3000
-- `npm run build` - Build production version
+- `npm run build` - Build production version  
 - `npm run start` - Start production server
 - `npm run lint` - Run ESLint for code quality
 - `npm run type-check` - Run TypeScript compiler without emitting files
 
-### Environment Setup
-- Copy `.env.example` to `.env.local` and configure:
-  - Supabase URL and keys
-  - OpenAI API key
-  - App URL (defaults to localhost:3000)
-  - Encryption key for sensitive data
+## Tech Stack
 
-## Architecture Overview
+- **Frontend:** Next.js 14, TypeScript, Tailwind CSS
+- **Backend:** Next.js API Routes
+- **Database:** Supabase (PostgreSQL)
+- **Authentication:** Supabase Auth
+- **Storage:** Supabase Storage  
+- **AI Services:** OpenAI Whisper API, GPT-4o-mini
+- **State Management:** Zustand
+- **Form Handling:** React Hook Form
 
-### Tech Stack
-- **Next.js 14** with App Router and TypeScript strict mode
-- **Supabase** for database, authentication, and file storage
-- **OpenAI APIs** (Whisper for transcription, GPT-4o-mini for summarization)
-- **Tailwind CSS** for styling
-- **React Hook Form** for form handling
-- **Zustand** for state management
+## Project Structure
 
-### Core Workflow
-This is a therapy transcription app that processes audio → transcription → clinical notes:
-1. Audio upload (MP3/WAV/M4A) to Supabase Storage
-2. Send to OpenAI Whisper for transcription
-3. AI-powered generation of SOAP/DAP clinical notes
-4. Export to PDF/Word with automatic audio cleanup for privacy
+```
+src/
+├── app/                 # Next.js 14 app directory
+│   ├── (auth)/         # Auth-related pages (login, signup, callback)
+│   ├── api/            # API routes
+│   │   └── auth/       # Authentication API endpoints
+│   └── upload/         # Main upload page
+├── components/          # Reusable UI components
+│   ├── auth/           # Authentication components
+│   └── ui/             # UI components (Button, Input, etc.)
+├── contexts/            # React contexts
+│   └── auth.tsx        # Authentication context and hooks
+├── lib/                # Utility functions
+│   ├── supabase/       # Supabase client and server utilities
+│   └── utils/          # Helper functions
+├── middleware.ts        # Next.js middleware for route protection
+└── types/              # TypeScript definitions
+```
 
-### Project Structure
-- `src/app/` - Next.js App Router pages
-- `src/components/` - Organized by feature (auth/, upload/, transcription/, notes/, export/)
-- `src/lib/` - Core utilities (supabase/, openai/, export/, utils/)
-- `src/types/` - TypeScript definitions
+## Core Features
 
-## Key Technical Considerations
+### ✅ Completed Features
+- **User Authentication System** (Supabase Auth)
+  - Email/password registration and login
+  - Email verification with secure callback flow
+  - Route protection with middleware
+  - Password validation and error handling
+  - Resend verification functionality
+- **Landing Page** - Student-focused copy and responsive design
 
-### Privacy & Security
-- **CRITICAL**: This handles sensitive healthcare data
-- Auto-delete audio files (configurable retention)
-- Use client initials/codes only (never full names)
-- All operations must be encrypted and logged
-- Supabase handles secure authentication and storage
+### 🚧 In Development
+- File upload for audio/video files (MP3, WAV, M4A, MP4, MOV, AVI)
+- AI transcription using OpenAI Whisper
+- AI-powered summaries using GPT-4o-mini
+- Export transcripts and summaries as PDF/Word
 
-### Performance Requirements
-- Support 100MB+ audio files
-- Transcription should complete in <2 minutes for 60-minute audio
-- Handle 50+ concurrent users
+## Environment Setup
 
-### Code Standards
-- TypeScript strict mode is enforced
-- Prefer Tailwind utility classes over custom CSS
-- Use server-side processing for sensitive operations
-- Implement proper loading states for async operations
-- Favor React functional components and hooks
+Create `.env.local` with:
+- Supabase URL and keys
+- OpenAI API key
+- App URL (defaults to localhost:3000)
 
-### Clinical Note Formats
-- **SOAP**: Subjective, Objective, Assessment, Plan
-- **DAP**: Data, Assessment, Plan
-- Both formats are healthcare industry standards for therapy documentation
+## Authentication Implementation
 
-## Development Context
+### Email Verification Flow
+1. **User Registration** → Redirects to `/auth/callback?status=pending&email=xxx`
+2. **Email Verification** → User clicks email link → `/api/auth/callback` → `/auth/callback?status=verified`
+3. **Manual Login** → User manually signs in after verification
 
-### Domain Knowledge
-- Therapists need quick, accurate, editable transcription results
-- Audio quality varies significantly in therapy settings
-- Consider speaker diarization (therapist vs client identification)
-- HIPAA compliance considerations for production deployment
+### Key Components
+- **Auth Context** (`/src/contexts/auth.tsx`) - Manages authentication state and API calls
+- **LoginForm** - Handles sign-in with verification error handling and resend option
+- **SignupForm** - User registration with redirect to verification page
+- **Unified Callback Page** (`/auth/callback`) - Handles all verification states
+- **API Callback** (`/api/auth/callback`) - Server-side email verification processing
+- **Middleware** (`/src/middleware.ts`) - Route protection and authentication checks
 
-### Current Status
-- MVP in development (Phase 1: ~40% complete)
-- Basic authentication and file upload implemented
-- Landing page and basic UI components exist
-- Transcription and note generation features in development
+### Route Protection
+- **Public Routes:** `/` (landing page)
+- **Auth Routes:** `/login`, `/signup`, `/auth/callback` (unauthenticated users only)
+- **Protected Routes:** `/upload` and all other routes (authenticated users only)
+
+## Current Status
+
+**Phase 1 Complete:** User authentication system with email verification
+**Phase 2 Next:** File upload and transcription features

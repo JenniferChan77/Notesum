@@ -1,4 +1,20 @@
+'use client'
+
+import Link from 'next/link'
+import { useAuth } from '@/contexts/auth'
+import { Button } from '@/components/ui/Button'
+
 export default function HomePage() {
+  const { user, signOut, loading } = useAuth()
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
+      </div>
+    )
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
       {/* Navigation */}
@@ -14,9 +30,26 @@ export default function HomePage() {
               <div className="ml-10 flex items-baseline space-x-4">
                 <a href="#features" className="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium">Features</a>
                 <a href="#privacy" className="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium">Privacy</a>
-                <button className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors">
-                  Sign In
-                </button>
+                {user ? (
+                  <div className="flex items-center space-x-4">
+                    <span className="text-gray-700">Welcome, {user.email}</span>
+                    <Link href="/upload">
+                      <Button size="sm">Go to Upload</Button>
+                    </Link>
+                    <Button variant="outline" size="sm" onClick={signOut}>
+                      Sign Out
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="flex items-center space-x-2">
+                    <Link href="/login">
+                      <Button variant="outline" size="sm">Sign In</Button>
+                    </Link>
+                    <Link href="/signup">
+                      <Button size="sm">Sign Up</Button>
+                    </Link>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -30,23 +63,32 @@ export default function HomePage() {
             <main className="mt-10 mx-auto max-w-7xl px-4 sm:mt-12 sm:px-6 md:mt-16 lg:mt-20 lg:px-8 xl:mt-28">
               <div className="sm:text-center lg:text-left">
                 <h1 className="text-4xl tracking-tight font-extrabold text-gray-900 sm:text-5xl md:text-6xl">
-                  <span className="block xl:inline">Transform therapy</span>{' '}
-                  <span className="block text-indigo-600 xl:inline">sessions into notes</span>
+                  <span className="block xl:inline">Transform lectures</span>{' '}
+                  <span className="block text-indigo-600 xl:inline">into smart notes</span>
                 </h1>
                 <p className="mt-3 text-base text-gray-500 sm:mt-5 sm:text-lg sm:max-w-xl sm:mx-auto md:mt-5 md:text-xl lg:mx-0">
-                  Privacy-first AI transcription that converts your therapy sessions into professional SOAP and DAP clinical notes in minutes, not hours.
+                  AI-powered transcription and summarization that converts your lecture recordings into organized study notes and summaries in minutes. Perfect for students who want to focus on learning, not note-taking.
                 </p>
                 <div className="mt-5 sm:mt-8 sm:flex sm:justify-center lg:justify-start">
-                  <div className="rounded-md shadow">
-                    <button className="w-full flex items-center justify-center px-8 py-3 border border-transparent text-base font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 md:py-4 md:text-lg md:px-10 transition-colors">
-                      Start Free Trial
-                    </button>
-                  </div>
-                  <div className="mt-3 sm:mt-0 sm:ml-3">
-                    <button className="w-full flex items-center justify-center px-8 py-3 border border-transparent text-base font-medium rounded-md text-indigo-700 bg-indigo-100 hover:bg-indigo-200 md:py-4 md:text-lg md:px-10 transition-colors">
-                      Watch Demo
-                    </button>
-                  </div>
+                  {user ? (
+                    <div className="rounded-md shadow">
+                      <Link href="/upload">
+                        <Button className="w-full flex items-center justify-center px-8 py-3 md:py-4 md:text-lg md:px-10">
+                          Start Transcribing
+                        </Button>
+                      </Link>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="rounded-md shadow">
+                        <Link href="/login">
+                          <Button className="w-full flex items-center justify-center px-8 py-3 md:py-4 md:text-lg md:px-10">
+                            Go Upload
+                          </Button>
+                        </Link>
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
             </main>
@@ -73,10 +115,10 @@ export default function HomePage() {
           <div className="lg:text-center">
             <h2 className="text-base text-indigo-600 font-semibold tracking-wide uppercase">Features</h2>
             <p className="mt-2 text-3xl leading-8 font-extrabold tracking-tight text-gray-900 sm:text-4xl">
-              Built for busy therapists
+              Built for busy students
             </p>
             <p className="mt-4 max-w-2xl text-xl text-gray-500 lg:mx-auto">
-              Save 15-30 minutes per session with AI-powered transcription and clinical note generation.
+              Save hours of manual note-taking with AI-powered transcription and smart study note generation.
             </p>
           </div>
 
@@ -90,7 +132,7 @@ export default function HomePage() {
                 </div>
                 <p className="ml-16 text-lg leading-6 font-medium text-gray-900">Privacy-First Design</p>
                 <p className="mt-2 ml-16 text-base text-gray-500">
-                  Auto-delete audio files, encrypted storage, and HIPAA-compliant infrastructure. Your data stays secure.
+                  Auto-delete audio files, encrypted storage, and secure infrastructure. Your personal study materials stay private.
                 </p>
               </div>
 
@@ -102,7 +144,7 @@ export default function HomePage() {
                 </div>
                 <p className="ml-16 text-lg leading-6 font-medium text-gray-900">AI-Powered Transcription</p>
                 <p className="mt-2 ml-16 text-base text-gray-500">
-                  Advanced speech recognition with speaker identification for accurate therapy session transcripts.
+                  Advanced speech recognition with speaker identification for accurate lecture and study session transcripts.
                 </p>
               </div>
 
@@ -112,9 +154,9 @@ export default function HomePage() {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                   </svg>
                 </div>
-                <p className="ml-16 text-lg leading-6 font-medium text-gray-900">Clinical Note Generation</p>
+                <p className="ml-16 text-lg leading-6 font-medium text-gray-900">Smart Study Notes</p>
                 <p className="mt-2 ml-16 text-base text-gray-500">
-                  Automatically generate professional SOAP and DAP notes from your session transcripts.
+                  Automatically generate organized study notes and key summaries from your lecture transcripts.
                 </p>
               </div>
 
@@ -126,7 +168,7 @@ export default function HomePage() {
                 </div>
                 <p className="ml-16 text-lg leading-6 font-medium text-gray-900">Export & Share</p>
                 <p className="mt-2 ml-16 text-base text-gray-500">
-                  Export notes as PDF or Word documents for easy sharing and record keeping.
+                  Export notes as PDF or Word documents for easy studying and sharing with classmates.
                 </p>
               </div>
             </div>
@@ -140,12 +182,12 @@ export default function HomePage() {
           <div className="lg:text-center">
             <h2 className="text-base text-indigo-600 font-semibold tracking-wide uppercase">Privacy & Security</h2>
             <p className="mt-2 text-3xl leading-8 font-extrabold tracking-tight text-gray-900 sm:text-4xl">
-              Your clients' privacy is our priority
+              Your privacy is our priority
             </p>
           </div>
           <div className="mt-10 text-center">
             <div className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-full text-indigo-600 bg-indigo-100">
-              HIPAA-Compliant Infrastructure Ready
+              Secure & Encrypted Infrastructure
             </div>
           </div>
         </div>
@@ -156,7 +198,7 @@ export default function HomePage() {
         <div className="max-w-7xl mx-auto py-12 px-4 sm:px-6 lg:px-8">
           <div className="text-center">
             <p className="text-gray-500 text-sm">
-              © 2024 TheraNotes. Built with privacy and compliance in mind.
+              © 2024 TheraNotes. Built with privacy and students in mind.
             </p>
           </div>
         </div>
