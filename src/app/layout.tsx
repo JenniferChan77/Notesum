@@ -6,7 +6,7 @@ import { AuthProvider } from '@/contexts/auth'
 const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
-  title: 'TheraNotes - Lecture Transcription App',
+  title: 'Notesum - Lecture Transcription App',
   description: 'AI-powered lecture transcription and summarization for students',
 }
 

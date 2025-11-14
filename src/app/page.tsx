@@ -23,7 +23,7 @@ export default function HomePage() {
           <div className="flex justify-between items-center h-16">
             <div className="flex items-center">
               <div className="flex-shrink-0">
-                <h1 className="text-2xl font-bold text-indigo-600">TheraNotes</h1>
+                <h1 className="text-2xl font-bold text-indigo-600">Notesum</h1>
               </div>
             </div>
             <div className="hidden md:block">
@@ -198,7 +198,7 @@ export default function HomePage() {
         <div className="max-w-7xl mx-auto py-12 px-4 sm:px-6 lg:px-8">
           <div className="text-center">
             <p className="text-gray-500 text-sm">
-              © 2024 TheraNotes. Built with privacy and students in mind.
+              © 2024 Notesum. Built with privacy and students in mind.
             </p>
           </div>
         </div>

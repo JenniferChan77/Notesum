@@ -12,7 +12,7 @@ export function AuthLayout({ children }: AuthLayoutProps) {
         <div className="text-center">
           <Link href="/" className="inline-block">
             <h1 className="text-3xl font-bold text-indigo-600 hover:text-indigo-500 transition-colors">
-              TheraNotes
+              Notesum
             </h1>
           </Link>
         </div>

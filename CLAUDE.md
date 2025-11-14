@@ -4,7 +4,7 @@ This file provides guidance to Claude Code when working with this lecture transc
 
 ## Project Overview
 
-**TheraNotes** is a lecture transcriber and summarizer web application that helps students transcribe and summarize audio/video lectures using AI technology.
+**Notesum** is a lecture transcriber and summarizer web application that helps students transcribe and summarize audio/video lectures using AI technology.
 
 ## Development Commands
 
