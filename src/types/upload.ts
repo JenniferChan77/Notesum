@@ -32,8 +32,6 @@ export const ALLOWED_FILE_TYPES = [
   'audio/x-m4a',     // M4A
   'audio/mp4',       // M4A (alternative MIME type)
   'video/mp4',       // MP4
-  'video/quicktime', // MOV
-  'video/x-msvideo'  // AVI
 ]
 
 export const ALLOWED_FILE_EXTENSIONS = [
@@ -41,8 +39,6 @@ export const ALLOWED_FILE_EXTENSIONS = [
   '.wav',
   '.m4a',
   '.mp4',
-  '.mov',
-  '.avi'
 ]
 
 export const MAX_FILE_SIZE_MB = 100

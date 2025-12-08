@@ -58,7 +58,7 @@ src/
 - **Landing Page** - Student-focused copy and responsive design
 
 ### 🚧 In Development
-- File upload for audio/video files (MP3, WAV, M4A, MP4, MOV, AVI)
+- File upload for audio/video files (MP3, WAV, M4A, MP4)
 - AI transcription using OpenAI Whisper
 - AI-powered summaries using GPT-4o-mini
 - Export transcripts and summaries as PDF/Word

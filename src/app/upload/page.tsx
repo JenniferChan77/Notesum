@@ -5,6 +5,7 @@ import { useAuth } from '@/contexts/auth'
 import { Button } from '@/components/ui/Button'
 import { FileUploadZone } from '@/components/upload/FileUploadZone'
 import { Tabs } from '@/components/ui/Tabs'
+import { uploadFile } from '@/components/upload/uploadFile'
 import Link from 'next/link'
 
 export default function UploadPage() {
@@ -69,7 +70,7 @@ export default function UploadPage() {
                       </p>
                     </div>
                   </div>
-                  {user?.id && <Button className="w-full mt-4" size="sm" >
+                  {user?.id && <Button className="w-full mt-4" size="sm" onClick={()=>uploadFile(selectedFile)}>
                     Start Transcription
                   </Button>}
                 </div>

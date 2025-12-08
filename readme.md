@@ -5,7 +5,7 @@ A web application that helps students transcribe and summarize audio/video lectu
 ## ✨ Features
 
 - 🔐 **User Authentication** - Secure login and registration
-- 📁 **File Upload** - Support for audio (MP3, WAV, M4A) and video (MP4, MOV, AVI) files
+- 📁 **File Upload** - Support for audio (MP3, WAV, M4A) and video (MP4) files
 - 🎯 **AI Transcription** - Powered by OpenAI Whisper for accurate speech-to-text
 - 📝 **Smart Summaries** - AI-generated summaries using GPT-4o-mini
 - 📄 **Export Options** - Download transcripts and summaries as PDF or Word documents

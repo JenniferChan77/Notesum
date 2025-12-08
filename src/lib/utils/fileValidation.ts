@@ -55,5 +55,5 @@ export function isAudioFile(file: File): boolean {
 
 export function isVideoFile(file: File): boolean {
   return file.type.startsWith('video/') ||
-         ['.mp4', '.mov', '.avi'].includes(getFileExtension(file.name))
+         ['.mp4'].includes(getFileExtension(file.name))
 }
