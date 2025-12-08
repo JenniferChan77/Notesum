@@ -11,9 +11,15 @@ import Link from 'next/link'
 export default function UploadPage() {
   const { user, signOut } = useAuth()
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const [loading, setLoading] = useState(false)
 
   const handleFileSelect = (file: File) => {
     setSelectedFile(file)
+  }
+
+  const startUpload = (file: File) => {
+    setLoading(true)
+    uploadFile(file)
   }
 
   return (
@@ -70,7 +76,8 @@ export default function UploadPage() {
                       </p>
                     </div>
                   </div>
-                  {user?.id && <Button className="w-full mt-4" size="sm" onClick={()=>uploadFile(selectedFile)}>
+                  {user?.id && 
+                    <Button className="w-full mt-4" size="sm" loading={loading} onClick={()=>startUpload(selectedFile)}>
                     Start Transcription
                   </Button>}
                 </div>
