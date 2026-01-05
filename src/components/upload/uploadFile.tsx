@@ -10,7 +10,7 @@ export async function uploadFile(file:File) {
 
   async function uploadChunk(chunk: Blob, index: number) {
     // 1. Ask backend for signed URL
-    const res = await fetch('/api/getSignedUrl', {
+    const res = await fetch('http://localhost:3000/api/getSignedUrl', {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -37,4 +37,16 @@ export async function uploadFile(file:File) {
 
   // Wait for all queue jobs to finish
   await queue.onIdle();
+
+  // Tell server to merge
+  await fetch('/api/mergeChunk', {
+    method: 'POST',
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({
+      uploadId,
+      fileName: file.name,
+      totalChunks: chunks.length,
+      fileType: file.type
+    })
+  })
 }

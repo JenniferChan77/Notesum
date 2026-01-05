@@ -10,11 +10,11 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "@ffmpeg/ffmpeg": "^0.12.15",
-    "@ffmpeg/util": "^0.12.2",
     "@supabase/ssr": "^0.7.0",
     "@supabase/supabase-js": "^2.38.4",
+    "bullmq": "^5.65.1",
     "clsx": "^2.1.1",
+    "ioredis": "^5.8.2",
     "next": "14.0.4",
     "p-queue": "^9.0.1",
     "react": "^18",
