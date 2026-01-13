@@ -7,6 +7,7 @@ import os from 'os'
 import { Readable } from 'stream'
 import ffmpeg from '@ts-ffmpeg/fluent-ffmpeg'
 import ffmpegPath from 'ffmpeg-static'
+import { transcribeQueue } from '../lib/queues/transcribeQueue.js'
 
 ffmpeg.setFfmpegPath(ffmpegPath)
 
@@ -31,7 +32,10 @@ export const worker = new Worker(
           .from('audio-temp')
           .download(`temp/${uploadId}/${i}-${fileName}`)
         
-        if (error) throw error
+        if (error) {
+          console.error(`Error processing job: ${job.id} for downloading supabase chunk:`, error)
+          throw error
+        }
 
         const nodeStream = Readable.fromWeb(data.stream())
         for await (const chunk of nodeStream) {
@@ -53,7 +57,9 @@ export const worker = new Worker(
         ffmpeg(tempVideoPath)
           .noVideo()
           .audioCodec('libmp3lame')
-          .audioBitrate(128)
+          .audioBitrate(48)
+          .audioChannels(1)
+          .audioFrequency(16000)
           .format('mp3')
           .on('error', reject)
           .on('end', resolve)
@@ -69,13 +75,21 @@ export const worker = new Worker(
           duplex: 'half'
         })
 
-      if (uploadError) throw uploadError
-      console.log(`job ${job.id} succeeeded`)
+      if (uploadError) {
+        console.error(`Error processing job ${job.id} for uploading merged audio`, uploadError)
+        throw uploadError
+      }
+
+      // Enqueue the transcribe job after a successful upload
+      await transcribeQueue.add('transcribe', {
+        uploadId,
+        audioPath: outputName
+      })
 
       return { success: true, outputName}
 
     } catch(err) {
-      console.error(`Error processing job ${job.id} for upload ${uploadId}:`, err);
+      console.error(`Merge job ${job.id} for upload ${uploadId} failed:`, err);
       throw err
     } finally {
       // This always runs, cleaning up files whether we succeeded or failed.
