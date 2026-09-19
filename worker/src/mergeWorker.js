@@ -8,29 +8,32 @@ import { Readable } from 'stream'
 import ffmpeg from '@ts-ffmpeg/fluent-ffmpeg'
 import ffmpegPath from 'ffmpeg-static'
 import { transcribeQueue } from '../lib/queues/transcribeQueue.js'
+import { setUploadStatus, markFailedIfFinal } from '../lib/uploadStatus.js'
 
 ffmpeg.setFfmpegPath(ffmpegPath)
 
 export const worker = new Worker(
   'merge-chunk',
   async (job) => {
-    const { uploadId, totalChunks, fileName } = job.data
-    const outputName = `${uploadId}/${fileName.replace(/\.[^/.]+$/, '.mp3')}`
+    const { uploadFileId, totalChunks, fileName } = job.data
+    const outputName = `${uploadFileId}/${fileName.replace(/\.[^/.]+$/, '.mp3')}`
 
-    const workDir = path.join(os.tmpdir(), `job-${uploadId}`)
+    const workDir = path.join(os.tmpdir(), `job-${uploadFileId}`)
     if (!fs.existsSync(workDir)) fs.mkdirSync(workDir)
     
     const tempVideoPath = path.join(workDir, 'input-video')
     const tempAudioPath = path.join(workDir, 'output.mp3')
 
     try {
+      await setUploadStatus(uploadFileId, 'processing')
+
       /* 1. Reassemble chunks using a WriteStream */
       const writeStream = fs.createWriteStream(tempVideoPath)
 
       for (let i = 0; i < totalChunks; i++) {
         const {data, error} = await supabase.storage
           .from('audio-temp')
-          .download(`temp/${uploadId}/${i}-${fileName}`)
+          .download(`temp/${uploadFileId}/${i}-${fileName}`)
         
         if (error) {
           console.error(`Error processing job: ${job.id} for downloading supabase chunk:`, error)
@@ -80,16 +83,19 @@ export const worker = new Worker(
         throw uploadError
       }
 
+      // Set status first so a fast transcribe job can't finish and then get overwritten
+      await setUploadStatus(uploadFileId, 'transcribing')
+
       // Enqueue the transcribe job after a successful upload
       await transcribeQueue.add('transcribe', {
-        uploadId,
+        uploadFileId,
         audioPath: outputName
       })
 
       return { success: true, outputName}
 
     } catch(err) {
-      console.error(`Merge job ${job.id} for upload ${uploadId} failed:`, err);
+      console.error(`Merge job ${job.id} for upload ${uploadFileId} failed:`, err);
       throw err
     } finally {
       // This always runs, cleaning up files whether we succeeded or failed.
@@ -103,3 +109,5 @@ export const worker = new Worker(
     concurrency: 2 // Limits how many FFmpeg jobs run at once on one machine
   }
 )
+
+worker.on('failed', markFailedIfFinal)

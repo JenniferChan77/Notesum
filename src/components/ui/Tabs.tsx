@@ -13,10 +13,19 @@ interface TabsProps {
   tabs: Tab[]
   defaultTab?: string
   className?: string
+  // Pass both to control the active tab from the parent
+  activeTab?: string
+  onTabChange?: (id: string) => void
 }
 
-export function Tabs({ tabs, defaultTab, className }: TabsProps) {
-  const [activeTab, setActiveTab] = useState(defaultTab || tabs[0]?.id)
+export function Tabs({ tabs, defaultTab, className, activeTab: controlledTab, onTabChange }: TabsProps) {
+  const [internalTab, setInternalTab] = useState(defaultTab || tabs[0]?.id)
+  const activeTab = controlledTab ?? internalTab
+
+  const setActiveTab = (id: string) => {
+    setInternalTab(id)
+    onTabChange?.(id)
+  }
 
   const activeTabContent = tabs.find(tab => tab.id === activeTab)?.content
 

@@ -9,6 +9,8 @@ import OpenAI from 'openai'
 import { supabase } from "../lib/supabase.js";
 import connection from "../lib/redis.js";
 import { Readable } from 'stream'
+import { setUploadStatus, markFailedIfFinal } from "../lib/uploadStatus.js";
+// import { summarizeQueue } from '../lib/queues/summarizeQueue.js'
 
 const exec = promisify(execFile)
 
@@ -70,7 +72,7 @@ async function transcribe(file) {
 export const transcribeWorker = new Worker(
   'transcribe',
   async job => {
-    const {uploadId: videoId, audioPath} = job.data
+    const {uploadFileId: videoId, audioPath} = job.data
     const tempFile = path.join(tmpdir(), `job-transcribe-${videoId}.mp3`)
     // Track all files for cleanup
     const createdFiles = [tempFile] 
@@ -118,6 +120,7 @@ export const transcribeWorker = new Worker(
             })
           }
         }
+        console.log('transcribing succeeded')
       }
       
       // 3. Store result
@@ -131,7 +134,15 @@ export const transcribeWorker = new Worker(
 
       if (insertError) {
         console.error(`Error processing job ${job.id} for uploading transcription`, insertError)
+        throw insertError
       }
+
+      await setUploadStatus(videoId, 'completed')
+
+      // Enqueue summarize job
+      // await summarizeQueue.add('summarize', {
+      //   videoId
+      // })
 
       return { success: true }
     } catch (err) {
@@ -149,3 +160,5 @@ export const transcribeWorker = new Worker(
     concurrency: 1
   }
 )
+
+transcribeWorker.on('failed', markFailedIfFinal)

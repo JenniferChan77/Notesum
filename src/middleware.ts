@@ -57,6 +57,12 @@ export async function middleware(req: NextRequest) {
     return NextResponse.redirect(new URL('/upload', req.url))
   }
   
+  // API calls get a 401 instead of a redirect, so fetch() callers see a real error
+  // rather than the login page's HTML. /api/auth/* keeps its existing behavior.
+  if (!session && pathname.startsWith('/api/') && !pathname.startsWith('/api/auth/')) {
+    return NextResponse.json({ error: 'Not signed in' }, { status: 401 })
+  }
+
   // If user is not authenticated and trying to access protected routes (not public, not auth)
   if (!session && !isPublicRoute && !isAuthRoute) {
     return NextResponse.redirect(new URL('/login', req.url))

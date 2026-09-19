@@ -40,19 +40,24 @@ src/
 │   ├── (auth)/              # login, signup, auth/callback pages
 │   ├── api/
 │   │   ├── auth/callback/   # server-side email verification handler
+│   │   ├── uploads/         # POST: create `uploads` row, returns uploadFileId
+│   │   │   └── [uploadFileId]/  # GET: status (+ transcript when completed), polled by the page
 │   │   ├── getSignedUrl/    # issues a signed upload URL for one file chunk
-│   │   └── mergeChunk/      # enqueues the "merge-chunk" BullMQ job
-│   └── upload/               # main upload page (protected)
+│   │   └── mergeChunk/      # marks upload 'queued' and enqueues the "merge-chunk" BullMQ job
+│   └── upload/               # main upload page (protected): upload, status polling, transcript view
 ├── components/
 │   ├── auth/                 # LoginForm, SignupForm, AuthLayout
-│   ├── ui/                    # Button, Input, Tabs
+│   ├── ui/                    # Button, Input, Tabs (optionally controlled via activeTab/onTabChange)
 │   └── upload/                 # FileUploadZone, uploadFile.tsx (chunked upload orchestration)
 ├── contexts/auth.tsx           # auth state/context
 ├── lib/
 │   ├── supabase/               # browser + server Supabase clients
 │   └── utils/                   # chunkFile.js, fileValidation.ts
-├── middleware.ts                # route protection
-└── types/
+├── middleware.ts                # route protection (401 JSON for /api/*, redirect for pages)
+└── types/                       # upload.ts: ProcessingStatus, UploadRecord, Transcript types
+
+supabase/
+└── migrations/                  # SQL run manually in the Supabase SQL editor (uploads table + RLS)
 
 worker/
 ├── src/
@@ -62,6 +67,7 @@ worker/
 │   └── summarizeWorker.js       # summarization (in progress, not wired into index.js yet)
 └── lib/
     ├── redis.js, supabase.js
+    ├── uploadStatus.js          # setUploadStatus() + markFailedIfFinal() for the `uploads` table
     ├── queues/                  # transcribeQueue.js, summarizeQueue.js (BullMQ queue definitions)
     ├── chunkText.js             # summarization-only (token-bounded text chunking)
     ├── validateChunk.js         # summarization-only (validates LLM chunk-summary output)
@@ -84,10 +90,13 @@ worker/
   - BullMQ job chain: `merge-chunk` → `transcribe` (see Transcription Pipeline section below)
   - Whisper transcription with automatic chunk-splitting for files over the 25MB API limit, with timestamp-accurate segment re-merging
   - Transcript persisted to the `transcriptions` Supabase table
+- **Upload status + transcript display** (end-to-end, user-visible)
+  - `uploads` table tracks each upload's status; workers update it as the job moves through the pipeline
+  - `/upload` polls the status every 4s, shows progress/errors, and renders the transcript as `[mm:ss] text` lines
+  - After completion, "Start Transcription" is replaced by "Upload a new file" (prevents re-transcribing/re-billing the same file)
 
 ### 🚧 In Development
-- **Transcript display** - transcription results are stored but not yet fetched/shown in the upload UI (the Transcript tab on `/upload` is still a static placeholder)
-- AI-powered summaries using GPT-4o-mini (`summarizeWorker.js` exists but isn't imported by `worker/src/index.js` yet)
+- AI-powered summaries using GPT-4o-mini (`summarizeWorker.js` exists but isn't imported by `worker/src/index.js` yet). The Summary tab on `/upload` is hidden behind `SHOW_SUMMARY = false` in `src/app/upload/page.tsx` — flip it to bring the tab back
 - Export transcripts and summaries as PDF/Word
 
 ## Environment Setup
@@ -121,30 +130,42 @@ App root — create `.env.local` with:
 - **Public Routes:** `/` (landing page)
 - **Auth Routes:** `/login`, `/signup`, `/auth/callback` (unauthenticated users only)
 - **Protected Routes:** `/upload` and all other routes (authenticated users only)
-- Note: `getSignedUrl` and `mergeChunk` API routes do not do an explicit `session.user` check themselves — they rely on Supabase RLS via the cookie-derived client
+- **API routes:** middleware returns `401 JSON` for unauthenticated `/api/*` calls instead of redirecting to `/login` (a redirect would hand `fetch()` callers HTML). `/api/auth/*` is exempt so the verification callback still works.
+- Each upload API route also calls `supabase.auth.getUser()` itself (middleware only uses `getSession()`, which doesn't verify the token with Supabase) and checks that the `uploads` row belongs to the caller. RLS hides other users' rows, so an unauthorized id returns 404 rather than 403.
 
 ## Transcription Pipeline Implementation
 
 ### Flow
-1. **Client** (`src/components/upload/uploadFile.tsx`) splits the file into 10MB chunks (`src/lib/utils/chunkFile.js`) and uploads up to 3 chunks concurrently, each via a signed URL fetched from `POST /api/getSignedUrl` (Supabase Storage bucket `audio-temp`, path `temp/{uploadId}/{chunkIndex}-{fileName}`).
-2. Once all chunks are uploaded, the client calls `POST /api/mergeChunk`, which enqueues a job on the `merge-chunk` BullMQ queue (Redis, defined inline in the route — there is no separate producer file in `worker/`).
-3. `worker/src/mergeWorker.js` consumes `merge-chunk` jobs: downloads and reassembles the chunks, extracts audio with ffmpeg (mono, 16kHz mp3), uploads the result to the `merged-audio` Storage bucket, then enqueues a `transcribe` job (`worker/lib/queues/transcribeQueue.js`).
-4. `worker/src/transcribeWorker.js` consumes `transcribe` jobs: downloads the merged audio, calls the OpenAI Whisper API (`whisper-1`, verbose JSON with segment timestamps). If the file is over Whisper's 25MB limit, it splits the audio into chunks with ffmpeg, transcribes each separately, and offsets/merges the segments before combining. Result is inserted into the `transcriptions` Supabase table (`{ video_id, text, segments }`).
-5. On success, `transcribeWorker.js` enqueues a `summarize` job (`summarizeQueue`) — this hands off into the not-yet-complete summarization pipeline.
+`uploadFileId` is the id that ties everything together: it's the `uploads` row id, the storage path prefix, the BullMQ job payload field, and `transcriptions.video_id`.
+
+1. **Client** (`src/components/upload/uploadFile.tsx`) calls `POST /api/uploads` with the file name. The route creates an `uploads` row (`status: 'uploading'`) and returns `uploadFileId`.
+2. The client splits the file into 10MB chunks (`src/lib/utils/chunkFile.js`) and uploads up to 3 concurrently, each via a signed URL from `POST /api/getSignedUrl` (Supabase Storage bucket `audio-temp`, path `temp/{uploadFileId}/{chunkIndex}-{fileName}`). The route uses the *stored* `file_name`, never the client's, so paths always match what the worker downloads. Any failed chunk rejects, so the merge never starts on an incomplete upload.
+3. The client calls `POST /api/mergeChunk`, which flips the row `uploading` → `queued` (a conditional update, so the same upload can't be queued twice) and enqueues a `merge-chunk` job (Redis/BullMQ, defined inline in the route — there is no separate producer file in `worker/`).
+4. `worker/src/mergeWorker.js` consumes `merge-chunk` jobs: sets `processing`, reassembles the chunks, extracts audio with ffmpeg (mono, 16kHz mp3), uploads to the `merged-audio` bucket, sets `transcribing`, then enqueues a `transcribe` job (`worker/lib/queues/transcribeQueue.js`). The status is set *before* enqueueing so a fast transcribe job can't be overwritten.
+5. `worker/src/transcribeWorker.js` consumes `transcribe` jobs: downloads the merged audio, calls Whisper (`whisper-1`, verbose JSON with segment timestamps), splitting files over the 25MB limit and offsetting/merging segments. It inserts into `transcriptions` (`{ video_id, text, segments }`) and sets `completed`.
+6. Meanwhile `/upload` polls `GET /api/uploads/{uploadFileId}` every 4s and renders the status. On `completed` the response also carries the transcript, which the Transcript tab renders as `[mm:ss] text`.
+7. Failures: each worker's `failed` handler (`markFailedIfFinal`) sets `failed` + the error message **only after retries are exhausted**, so the UI doesn't flash an error during a retry. Status writes never throw — a failed status update must not make BullMQ redo expensive ffmpeg/Whisper work.
+
+### Database
+- `uploads`: `id`, `user_id`, `file_name`, `status`, `error`, timestamps. Status: `uploading | queued | processing | transcribing | completed | failed`.
+- RLS (see `supabase/migrations/`): users read/insert only their own rows and may only move their own row `uploading` → `queued` (column-level grant limits them to `status`). Every other transition comes from the worker, which uses the service-role key and bypasses RLS.
+- `transcriptions` is readable only via the matching `uploads` row's owner.
 
 ### Key files
+- `src/app/api/uploads/route.ts`, `src/app/api/uploads/[uploadFileId]/route.ts`
 - `src/app/api/getSignedUrl/route.ts`, `src/app/api/mergeChunk/route.ts`
-- `src/components/upload/uploadFile.tsx`, `src/lib/utils/chunkFile.js`
-- `worker/src/mergeWorker.js`, `worker/src/transcribeWorker.js`
-- `worker/lib/queues/transcribeQueue.js`
+- `src/components/upload/uploadFile.tsx`, `src/lib/utils/chunkFile.js`, `src/app/upload/page.tsx`
+- `worker/src/mergeWorker.js`, `worker/src/transcribeWorker.js`, `worker/lib/uploadStatus.js`
+- `worker/lib/queues/transcribeQueue.js`, `supabase/migrations/`
 
 ### Known gaps
-- No UI polls/fetches the `transcriptions` table — this is the main missing piece before the feature is user-visible end-to-end.
-- `uploadFile.tsx` currently calls a hardcoded `http://localhost:3000/api/getSignedUrl` rather than a relative URL — will break in non-local deployments.
-- All BullMQ queues (`merge-chunk`, `transcribe`, `summarize`) use 3 retry attempts with exponential backoff (30s base delay).
+- All BullMQ queues (`merge-chunk`, `transcribe`, `summarize`) use 3 retry attempts with exponential backoff (30s base delay), so a hard failure takes ~1.5 min to surface in the UI.
+- A transcribe retry after a successful insert would insert a duplicate `transcriptions` row (no upsert/unique constraint on `video_id`).
+- If the client dies mid-upload, the `uploads` row is left at `uploading` forever (no cleanup job); the `audio-temp` chunks are never deleted either.
+- Polling is simple but chatty — Supabase Realtime on the `uploads` row is the natural upgrade.
 
 ## Current Status
 
 **Phase 1 Complete:** User authentication system with email verification
-**Phase 2 Complete (backend):** Chunked upload and transcription pipeline — transcript is generated and stored, but not yet displayed in the UI
-**Phase 3 In Progress:** Summarization (worker exists, not yet wired up) and transcript/summary display UI
+**Phase 2 Complete:** Chunked upload → transcription pipeline, with status tracking and transcript display in the UI (end-to-end, user-visible)
+**Phase 3 In Progress:** Summarization (worker exists, not wired into `worker/src/index.js`; Summary tab hidden behind `SHOW_SUMMARY`) and PDF/Word export

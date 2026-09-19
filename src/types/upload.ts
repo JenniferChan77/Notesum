@@ -16,6 +16,37 @@ export enum UploadStatus {
   ERROR = 'error'
 }
 
+// Server-side pipeline status, stored in the `uploads` table and updated by the workers
+export type ProcessingStatus =
+  | 'uploading'
+  | 'queued'
+  | 'processing'
+  | 'transcribing'
+  | 'completed'
+  | 'failed'
+
+export interface TranscriptSegment {
+  id: number
+  start: number // seconds
+  end: number   // seconds
+  text: string
+}
+
+export interface Transcript {
+  text: string
+  segments: TranscriptSegment[] | null
+}
+
+// Response shape of GET /api/uploads/[uploadFileId]
+export interface UploadRecord {
+  id: string
+  file_name: string
+  status: ProcessingStatus
+  error: string | null
+  updated_at: string
+  transcript: Transcript | null
+}
+
 export interface FileValidationResult {
   isValid: boolean
   error?: string
