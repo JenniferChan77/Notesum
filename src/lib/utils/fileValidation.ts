@@ -45,7 +45,8 @@ export function formatFileSize(bytes: number): string {
 }
 
 export function getFileExtension(fileName: string): string {
-  return fileName.slice(fileName.lastIndexOf('.')).toLowerCase()
+  const dot = fileName.lastIndexOf('.')
+  return dot === -1 ? '' : fileName.slice(dot).toLowerCase()
 }
 
 export function isAudioFile(file: File): boolean {

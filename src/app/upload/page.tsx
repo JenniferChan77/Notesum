@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/Button'
 import { FileUploadZone } from '@/components/upload/FileUploadZone'
 import { Tabs } from '@/components/ui/Tabs'
 import { uploadFile } from '@/components/upload/uploadFile'
+import { formatTime } from '@/lib/utils/formatTime'
 import type { ProcessingStatus, TranscriptSegment, UploadRecord } from '@/types/upload'
 import Link from 'next/link'
 
@@ -21,15 +22,6 @@ const STATUS_TEXT: Record<ProcessingStatus, string> = {
   transcribing: 'Transcribing… this can take a few minutes',
   completed: 'Transcript ready',
   failed: 'Transcription failed',
-}
-
-// 75.4 -> "01:15", 3725 -> "1:02:05"
-function formatTime(seconds: number) {
-  const s = Math.floor(seconds)
-  const h = Math.floor(s / 3600)
-  const mm = String(Math.floor((s % 3600) / 60)).padStart(2, '0')
-  const ss = String(s % 60).padStart(2, '0')
-  return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`
 }
 
 function TranscriptView({ text, segments }: { text: string, segments: TranscriptSegment[] | null }) {
