@@ -78,6 +78,27 @@ export const transcribeWorker = new Worker(
     const createdFiles = [tempFile] 
 
     try {
+      // 0. A retry can land here after a previous attempt already inserted (crash or
+      // stall after the commit). Re-running would bill Whisper again for the same audio.
+      const {data: existing, error: existingError} = await supabase
+        .from('transcriptions')
+        .select('video_id')
+        .eq('video_id', videoId)
+        .maybeSingle()
+
+      // Unknown state — let BullMQ retry rather than risk a duplicate transcription.
+      if (existingError) {
+        console.error(`Error processing job ${job.id} for checking existing transcription`, existingError)
+        throw existingError
+      }
+
+      if (existing) {
+        console.log(`Transcript already exists for ${videoId}, skipping re-transcription`)
+        // The previous attempt may have died between the insert and this status write.
+        await setUploadStatus(videoId, 'completed')
+        return { success: true, skipped: true }
+      }
+
       // 1. Download audio
       const {data, error} = await supabase
         .storage
@@ -123,14 +144,16 @@ export const transcribeWorker = new Worker(
         console.log('transcribing succeeded')
       }
       
-      // 3. Store result
+      // 3. Store result. Upsert, not insert: the check above can miss a previous
+      // attempt whose insert committed after this attempt's read, and the unique
+      // index on video_id would then fail the job over an already-good transcript.
       const { error: insertError } = await supabase
         .from('transcriptions')
-        .insert({
+        .upsert({
           video_id: videoId,
           text: fullText.trim(),
           segments: fullSegments
-        })
+        }, { onConflict: 'video_id' })
 
       if (insertError) {
         console.error(`Error processing job ${job.id} for uploading transcription`, insertError)

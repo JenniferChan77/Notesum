@@ -57,13 +57,13 @@ src/
 └── types/                       # upload.ts: ProcessingStatus, UploadRecord, Transcript types
 
 supabase/
-└── migrations/                  # SQL run manually in the Supabase SQL editor (uploads table + RLS)
+└── migrations/                  # SQL run manually in the Supabase SQL editor (uploads table + RLS, transcriptions unique index)
 
 worker/
 ├── src/
 │   ├── index.js                # entry point — imports mergeWorker + transcribeWorker
 │   ├── mergeWorker.js           # reassembles uploaded chunks, extracts audio (ffmpeg), enqueues transcribe job
-│   ├── transcribeWorker.js      # downloads audio, calls Whisper, writes to `transcriptions` table, enqueues summarize job
+│   ├── transcribeWorker.js      # downloads audio, calls Whisper, writes to `transcriptions` table (summarize enqueue is commented out)
 │   └── summarizeWorker.js       # summarization (in progress, not wired into index.js yet)
 └── lib/
     ├── redis.js, supabase.js
@@ -142,14 +142,14 @@ App root — create `.env.local` with:
 2. The client splits the file into 10MB chunks (`src/lib/utils/chunkFile.js`) and uploads up to 3 concurrently, each via a signed URL from `POST /api/getSignedUrl` (Supabase Storage bucket `audio-temp`, path `temp/{uploadFileId}/{chunkIndex}-{fileName}`). The route uses the *stored* `file_name`, never the client's, so paths always match what the worker downloads. Any failed chunk rejects, so the merge never starts on an incomplete upload.
 3. The client calls `POST /api/mergeChunk`, which flips the row `uploading` → `queued` (a conditional update, so the same upload can't be queued twice) and enqueues a `merge-chunk` job (Redis/BullMQ, defined inline in the route — there is no separate producer file in `worker/`).
 4. `worker/src/mergeWorker.js` consumes `merge-chunk` jobs: sets `processing`, reassembles the chunks, extracts audio with ffmpeg (mono, 16kHz mp3), uploads to the `merged-audio` bucket, sets `transcribing`, then enqueues a `transcribe` job (`worker/lib/queues/transcribeQueue.js`). The status is set *before* enqueueing so a fast transcribe job can't be overwritten.
-5. `worker/src/transcribeWorker.js` consumes `transcribe` jobs: downloads the merged audio, calls Whisper (`whisper-1`, verbose JSON with segment timestamps), splitting files over the 25MB limit and offsetting/merging segments. It inserts into `transcriptions` (`{ video_id, text, segments }`) and sets `completed`.
+5. `worker/src/transcribeWorker.js` consumes `transcribe` jobs: downloads the merged audio, calls Whisper (`whisper-1`, verbose JSON with segment timestamps), splitting files over the 25MB limit and offsetting/merging segments. It upserts into `transcriptions` (`{ video_id, text, segments }`, `onConflict: 'video_id'`) and sets `completed`. The job is idempotent: it first checks for an existing `transcriptions` row and, if one is there, skips the download/Whisper call entirely and just re-asserts `completed` — a retry after a crash between the insert and the status write costs nothing and can't double-bill.
 6. Meanwhile `/upload` polls `GET /api/uploads/{uploadFileId}` every 4s and renders the status. On `completed` the response also carries the transcript, which the Transcript tab renders as `[mm:ss] text`.
 7. Failures: each worker's `failed` handler (`markFailedIfFinal`) sets `failed` + the error message **only after retries are exhausted**, so the UI doesn't flash an error during a retry. Status writes never throw — a failed status update must not make BullMQ redo expensive ffmpeg/Whisper work.
 
 ### Database
 - `uploads`: `id`, `user_id`, `file_name`, `status`, `error`, timestamps. Status: `uploading | queued | processing | transcribing | completed | failed`.
 - RLS (see `supabase/migrations/`): users read/insert only their own rows and may only move their own row `uploading` → `queued` (column-level grant limits them to `status`). Every other transition comes from the worker, which uses the service-role key and bypasses RLS.
-- `transcriptions` is readable only via the matching `uploads` row's owner.
+- `transcriptions` is readable only via the matching `uploads` row's owner. A unique index on `video_id` (`transcriptions_video_id_key`) enforces one transcript per upload — the worker's upsert relies on it for `on conflict` inference, so the migration must be applied before that worker code runs.
 
 ### Key files
 - `src/app/api/uploads/route.ts`, `src/app/api/uploads/[uploadFileId]/route.ts`
@@ -160,7 +160,7 @@ App root — create `.env.local` with:
 
 ### Known gaps
 - All BullMQ queues (`merge-chunk`, `transcribe`, `summarize`) use 3 retry attempts with exponential backoff (30s base delay), so a hard failure takes ~1.5 min to surface in the UI.
-- A transcribe retry after a successful insert would insert a duplicate `transcriptions` row (no upsert/unique constraint on `video_id`).
+- `summarizeWorker.js` still inserts into `summaries` unconditionally, so a summarize retry after a successful insert would duplicate the row. `transcriptions` was fixed (unique index + upsert + existence check); apply the same pattern when summarization is wired into `worker/src/index.js`.
 - If the client dies mid-upload, the `uploads` row is left at `uploading` forever (no cleanup job); the `audio-temp` chunks are never deleted either.
 - Polling is simple but chatty — Supabase Realtime on the `uploads` row is the natural upgrade.
 
