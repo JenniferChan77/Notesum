@@ -15,4 +15,12 @@ const config = {
   modulePathIgnorePatterns: ['<rootDir>/worker/'],
 }
 
-module.exports = createJestConfig(config)
+// p-queue (and its p-timeout dep) ship ESM only, so they must be transformed too.
+// next/jest always appends '/node_modules/' to transformIgnorePatterns, so replace it after.
+module.exports = async () => {
+  const resolved = await createJestConfig(config)()
+  resolved.transformIgnorePatterns = resolved.transformIgnorePatterns.map((pattern) =>
+    pattern === '/node_modules/' ? '/node_modules/(?!(p-queue|p-timeout)/)' : pattern
+  )
+  return resolved
+}
