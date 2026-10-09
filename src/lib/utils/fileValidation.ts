@@ -6,6 +6,12 @@ import {
 } from '@/types/upload'
 
 export function validateFile(file: File): FileValidationResult {
+  // An empty file has no chunks to upload, so /api/mergeChunk would reject it
+  // and leave its uploads row stuck at 'uploading'
+  if (file.size === 0) {
+    return { isValid: false, error: 'File is empty. Please choose a different file.' }
+  }
+
   // Check file size
   const maxSizeInBytes = MAX_FILE_SIZE_MB * 1024 * 1024
   if (file.size > maxSizeInBytes) {
@@ -45,7 +51,8 @@ export function formatFileSize(bytes: number): string {
 }
 
 export function getFileExtension(fileName: string): string {
-  return fileName.slice(fileName.lastIndexOf('.')).toLowerCase()
+  const dot = fileName.lastIndexOf('.')
+  return dot === -1 ? '' : fileName.slice(dot).toLowerCase()
 }
 
 export function isAudioFile(file: File): boolean {
@@ -55,5 +62,5 @@ export function isAudioFile(file: File): boolean {
 
 export function isVideoFile(file: File): boolean {
   return file.type.startsWith('video/') ||
-         ['.mp4', '.mov', '.avi'].includes(getFileExtension(file.name))
+         ['.mp4'].includes(getFileExtension(file.name))
 }

@@ -107,7 +107,7 @@ export function FileUploadZone({ onFileSelect, className }: FileUploadZoneProps)
           ref={fileInputRef}
           type="file"
           className="hidden"
-          accept=".mp3,.wav,.m4a,.mp4,.mov,.avi,audio/*,video/*"
+          accept=".mp3,.wav,.m4a,.mp4,audio/*,video/*"
           onChange={handleFileInputChange}
         />
 
@@ -143,7 +143,7 @@ export function FileUploadZone({ onFileSelect, className }: FileUploadZoneProps)
                 {isDragOver ? 'Drop your file here' : 'Drop files or click to browse'}
               </h3>
               <p className="text-sm text-gray-500 mb-3">
-                MP3, WAV, M4A, MP4, MOV, AVI up to 100MB
+                MP3, WAV, M4A, MP4 up to 100MB
               </p>
             </div>
             <Button className="mx-auto" size="sm">

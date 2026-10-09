@@ -16,6 +16,37 @@ export enum UploadStatus {
   ERROR = 'error'
 }
 
+// Server-side pipeline status, stored in the `uploads` table and updated by the workers
+export type ProcessingStatus =
+  | 'uploading'
+  | 'queued'
+  | 'processing'
+  | 'transcribing'
+  | 'completed'
+  | 'failed'
+
+export interface TranscriptSegment {
+  id: number
+  start: number // seconds
+  end: number   // seconds
+  text: string
+}
+
+export interface Transcript {
+  text: string
+  segments: TranscriptSegment[] | null
+}
+
+// Response shape of GET /api/uploads/[uploadFileId]
+export interface UploadRecord {
+  id: string
+  file_name: string
+  status: ProcessingStatus
+  error: string | null
+  updated_at: string
+  transcript: Transcript | null
+}
+
 export interface FileValidationResult {
   isValid: boolean
   error?: string
@@ -32,8 +63,6 @@ export const ALLOWED_FILE_TYPES = [
   'audio/x-m4a',     // M4A
   'audio/mp4',       // M4A (alternative MIME type)
   'video/mp4',       // MP4
-  'video/quicktime', // MOV
-  'video/x-msvideo'  // AVI
 ]
 
 export const ALLOWED_FILE_EXTENSIONS = [
@@ -41,8 +70,6 @@ export const ALLOWED_FILE_EXTENSIONS = [
   '.wav',
   '.m4a',
   '.mp4',
-  '.mov',
-  '.avi'
 ]
 
 export const MAX_FILE_SIZE_MB = 100

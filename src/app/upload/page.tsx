@@ -1,19 +1,136 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useAuth } from '@/contexts/auth'
 import { Button } from '@/components/ui/Button'
 import { FileUploadZone } from '@/components/upload/FileUploadZone'
 import { Tabs } from '@/components/ui/Tabs'
+import { uploadFile } from '@/components/upload/uploadFile'
+import { formatTime } from '@/lib/utils/formatTime'
+import type { ProcessingStatus, TranscriptSegment, UploadRecord } from '@/types/upload'
 import Link from 'next/link'
+
+const POLL_INTERVAL_MS = 4000
+
+// Summarization isn't built yet; flip to true to bring the Summary tab back
+const SHOW_SUMMARY = false
+
+const STATUS_TEXT: Record<ProcessingStatus, string> = {
+  uploading: 'Uploading file…',
+  queued: 'Waiting in queue…',
+  processing: 'Extracting audio…',
+  transcribing: 'Transcribing… this can take a few minutes',
+  completed: 'Transcript ready',
+  failed: 'Transcription failed',
+}
+
+function TranscriptView({ text, segments }: { text: string, segments: TranscriptSegment[] | null }) {
+  return (
+    <div className="max-h-[500px] overflow-y-auto space-y-2 text-left">
+      {segments?.length ? (
+        // Index as key: segment ids restart at 0 for each chunk of a long file
+        segments.map((seg, i) => (
+          <p key={i} className="text-gray-800 leading-relaxed">
+            <span className="mr-2 font-mono text-xs text-indigo-600">[{formatTime(seg.start)}]</span>
+            {seg.text.trim()}
+          </p>
+        ))
+      ) : (
+        <p className="text-gray-800 leading-relaxed whitespace-pre-wrap">{text}</p>
+      )}
+    </div>
+  )
+}
 
 export default function UploadPage() {
   const { user, signOut } = useAuth()
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [uploadFileId, setUploadFileId] = useState<string | null>(null)
+  const [record, setRecord] = useState<UploadRecord | null>(null)
+  const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const [activeTab, setActiveTab] = useState(SHOW_SUMMARY ? 'summary' : 'transcript')
+  // Bumped to remount FileUploadZone, which clears the file it shows
+  const [uploadZoneKey, setUploadZoneKey] = useState(0)
 
   const handleFileSelect = (file: File) => {
     setSelectedFile(file)
+    setUploadFileId(null)
+    setRecord(null)
+    setErrorMessage(null)
   }
+
+  const handleNewUpload = () => {
+    setSelectedFile(null)
+    setUploadFileId(null)
+    setRecord(null)
+    setErrorMessage(null)
+    setUploadZoneKey(k => k + 1)
+  }
+
+  const startUpload = async (file: File) => {
+    setLoading(true)
+    setUploadFileId(null)
+    setRecord(null)
+    setErrorMessage(null)
+    try {
+      const id = await uploadFile(file)
+      setUploadFileId(id) // starts polling
+    } catch (err) {
+      console.error('Upload failed:', err)
+      setErrorMessage(err instanceof Error ? err.message : 'Upload failed')
+      setLoading(false)
+    }
+  }
+
+  // Poll the upload's status until the worker finishes or fails
+  useEffect(() => {
+    if (!uploadFileId) return
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout>
+
+    const poll = async () => {
+      try {
+        const res = await fetch(`/api/uploads/${uploadFileId}`)
+        const data = await res.json()
+        if (cancelled) return
+
+        // 4xx/5xx won't fix itself by asking again: stop and show it
+        if (!res.ok) {
+          setErrorMessage(data.error ?? `Status check failed (${res.status})`)
+          setLoading(false)
+          return
+        }
+
+        setRecord(data)
+        if (data.status === 'completed' || data.status === 'failed') {
+          setLoading(false)
+          return
+        }
+      } catch (err) {
+        // Network blip: keep polling
+        console.error('Status check failed, retrying:', err)
+      }
+      if (!cancelled) timer = setTimeout(poll, POLL_INTERVAL_MS)
+    }
+
+    poll()
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [uploadFileId])
+
+  const statusText = errorMessage
+    ? `Error: ${errorMessage}`
+    : record
+      ? record.status === 'failed' && record.error
+        ? `${STATUS_TEXT.failed}: ${record.error}`
+        : STATUS_TEXT[record.status]
+      : loading
+        ? STATUS_TEXT.uploading
+        : null
+  const isError = !!errorMessage || record?.status === 'failed'
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
@@ -48,7 +165,10 @@ export default function UploadPage() {
           <div className="lg:col-span-1 h-full">
             <div className="bg-white rounded-lg shadow-xl p-6 h-full">
               <h3 className="text-lg font-semibold text-gray-900 mb-4">Upload File</h3>
-              <FileUploadZone onFileSelect={handleFileSelect} />
+              {/* Locked while a job runs, so picking a new file can't orphan it */}
+              <div className={loading ? 'pointer-events-none opacity-50' : undefined}>
+                <FileUploadZone key={uploadZoneKey} onFileSelect={handleFileSelect} />
+              </div>
 
               {selectedFile && (
                 <div className="mt-6 p-4 bg-gray-50 rounded-lg">
@@ -69,9 +189,37 @@ export default function UploadPage() {
                       </p>
                     </div>
                   </div>
-                  {user?.id && <Button className="w-full mt-4" size="sm" >
-                    Start Transcription
-                  </Button>}
+                  {/* Hidden once done: clicking again would re-transcribe (and re-bill) the same file */}
+                  {user?.id && record?.status !== 'completed' && (
+                    <Button className="w-full mt-4" size="sm" loading={loading} onClick={()=>startUpload(selectedFile)}>
+                      Start Transcription
+                    </Button>
+                  )}
+
+                  {statusText && (
+                    <p className={`mt-3 text-sm ${isError ? 'text-red-600' : 'text-gray-600'}`}>
+                      {statusText}
+                    </p>
+                  )}
+
+                  {record?.status === 'completed' && (
+                    <div className="mt-3 space-y-2">
+                      {/* Only needed when there's a Summary tab to switch away from */}
+                      {SHOW_SUMMARY && (
+                        <Button
+                          variant="outline"
+                          className="w-full"
+                          size="sm"
+                          onClick={() => setActiveTab('transcript')}
+                        >
+                          View transcript
+                        </Button>
+                      )}
+                      <Button className="w-full" size="sm" onClick={handleNewUpload}>
+                        Upload a new file
+                      </Button>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -95,7 +243,7 @@ export default function UploadPage() {
                               </svg>
                             </div>
                             <h3 className="text-lg font-medium text-gray-900 mb-2">Ready for processing</h3>
-                            <p className="text-gray-600">Click "Start Transcription" to generate an AI summary</p>
+                            <p className="text-gray-600">Click &quot;Start Transcription&quot; to generate an AI summary</p>
                           </div>
                         ) : (
                           <div className="text-center py-12">
@@ -116,7 +264,9 @@ export default function UploadPage() {
                     label: 'Transcript',
                     content: (
                       <div className="space-y-4">
-                        {selectedFile ? (
+                        {record?.transcript ? (
+                          <TranscriptView text={record.transcript.text} segments={record.transcript.segments} />
+                        ) : selectedFile ? (
                           <div className="text-center py-12">
                             <div className="w-16 h-16 mx-auto bg-indigo-100 rounded-full flex items-center justify-center mb-4">
                               <svg className="w-8 h-8 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -124,7 +274,7 @@ export default function UploadPage() {
                               </svg>
                             </div>
                             <h3 className="text-lg font-medium text-gray-900 mb-2">Ready for processing</h3>
-                            <p className="text-gray-600">Click "Start Transcription" to generate the full transcript</p>
+                            <p className="text-gray-600">Click &quot;Start Transcription&quot; to generate the full transcript</p>
                           </div>
                         ) : (
                           <div className="text-center py-12">
@@ -140,8 +290,9 @@ export default function UploadPage() {
                       </div>
                     )
                   }
-                ]}
-                defaultTab="summary"
+                ].filter(tab => SHOW_SUMMARY || tab.id !== 'summary')}
+                activeTab={activeTab}
+                onTabChange={setActiveTab}
               />
             </div>
           </div>
