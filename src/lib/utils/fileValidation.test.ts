@@ -28,6 +28,13 @@ describe('validateFile', () => {
     expect(result.error).toBe('File size must be less than 100MB. Current size: 150 MB')
   })
 
+  it('rejects an empty file, even with an allowed type', () => {
+    expect(validateFile(fakeFile('lecture.mp3', 0, 'audio/mpeg'))).toEqual({
+      isValid: false,
+      error: 'File is empty. Please choose a different file.',
+    })
+  })
+
   it('falls back to the extension when the MIME type is unknown', () => {
     expect(validateFile(fakeFile('LECTURE.MP3', MB, '')).isValid).toBe(true)
     expect(validateFile(fakeFile('lecture.m4a', MB, 'application/octet-stream')).isValid).toBe(true)

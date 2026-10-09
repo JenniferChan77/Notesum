@@ -6,6 +6,12 @@ import {
 } from '@/types/upload'
 
 export function validateFile(file: File): FileValidationResult {
+  // An empty file has no chunks to upload, so /api/mergeChunk would reject it
+  // and leave its uploads row stuck at 'uploading'
+  if (file.size === 0) {
+    return { isValid: false, error: 'File is empty. Please choose a different file.' }
+  }
+
   // Check file size
   const maxSizeInBytes = MAX_FILE_SIZE_MB * 1024 * 1024
   if (file.size > maxSizeInBytes) {

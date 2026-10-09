@@ -16,9 +16,13 @@ App (root):
 - `npm run start` - Start production server
 - `npm run lint` - Run ESLint for code quality
 - `npm run type-check` - Run TypeScript compiler without emitting files
+- `npm test` - Run the app's Jest tests (utils, API routes)
 
 Worker (`worker/`) — must be running for uploads to actually get processed:
 - `npm start` (run from `worker/`) - Boots both the merge and transcribe BullMQ workers (`worker/src/index.js`)
+- `npm test` (run from `worker/`) - Run the worker's Jest tests (native ESM; the "VM Modules is an experimental feature" warning is expected)
+
+CI (`.github/workflows/ci.yml`, GitHub Actions) runs on every PR and on pushes to `master`: an `app` job (lint, type-check, test, build with dummy env vars) and a `worker` job (test). No secrets are needed because every external service is mocked.
 
 ## Tech Stack
 
@@ -28,7 +32,8 @@ Worker (`worker/`) — must be running for uploads to actually get processed:
 - **Database:** Supabase (PostgreSQL)
 - **Authentication:** Supabase Auth
 - **Storage:** Supabase Storage
-- **AI Services:** OpenAI Whisper API (`whisper-1`), GPT-4o-mini (summarization, in progress)
+- **AI Services:** OpenAI Whisper API (`whisper-1`)
+- **Testing:** Jest 29 (app via `next/jest`; worker as native ESM)
 - **State Management:** Zustand
 - **Form Handling:** React Hook Form
 
@@ -52,8 +57,9 @@ src/
 ├── contexts/auth.tsx           # auth state/context
 ├── lib/
 │   ├── supabase/               # browser + server Supabase clients
-│   └── utils/                   # chunkFile.js, fileValidation.ts
+│   └── utils/                   # chunkFile.js, fileValidation.ts, formatTime.ts (transcript [mm:ss])
 ├── middleware.ts                # route protection (401 JSON for /api/*, redirect for pages)
+├── test-utils/                  # supabaseMock.ts: chainable fake Supabase client for route tests
 └── types/                       # upload.ts: ProcessingStatus, UploadRecord, Transcript types
 
 supabase/
@@ -61,18 +67,16 @@ supabase/
 
 worker/
 ├── src/
-│   ├── index.js                # entry point — imports mergeWorker + transcribeWorker
-│   ├── mergeWorker.js           # reassembles uploaded chunks, extracts audio (ffmpeg), enqueues transcribe job
-│   ├── transcribeWorker.js      # downloads audio, calls Whisper, writes to `transcriptions` table (summarize enqueue is commented out)
-│   └── summarizeWorker.js       # summarization (in progress, not wired into index.js yet)
+│   ├── index.js                # entry point — creates the BullMQ Workers (Redis connection, concurrency, 'failed' handlers)
+│   ├── mergeWorker.js           # processMergeJob: reassembles chunks, extracts audio (ffmpeg), enqueues transcribe job; toMp3Path()
+│   └── transcribeWorker.js      # processTranscribeJob: downloads audio, calls Whisper, writes `transcriptions`; offsetSegments()
 └── lib/
     ├── redis.js, supabase.js
     ├── uploadStatus.js          # setUploadStatus() + markFailedIfFinal() for the `uploads` table
-    ├── queues/                  # transcribeQueue.js, summarizeQueue.js (BullMQ queue definitions)
-    ├── chunkText.js             # summarization-only (token-bounded text chunking)
-    ├── validateChunk.js         # summarization-only (validates LLM chunk-summary output)
-    └── prompts.js                # summarization-only
+    └── queues/                  # transcribeQueue.js (BullMQ queue definition)
 ```
+
+The processor modules export plain functions and never construct a `Worker`. Keep it that way: it's what lets tests import them without opening a Redis connection.
 
 ## Core Features
 
@@ -95,8 +99,10 @@ worker/
   - `/upload` polls the status every 4s, shows progress/errors, and renders the transcript as `[mm:ss] text` lines
   - After completion, "Start Transcription" is replaced by "Upload a new file" (prevents re-transcribing/re-billing the same file)
 
-### 🚧 In Development
-- AI-powered summaries using GPT-4o-mini (`summarizeWorker.js` exists but isn't imported by `worker/src/index.js` yet). The Summary tab on `/upload` is hidden behind `SHOW_SUMMARY = false` in `src/app/upload/page.tsx` — flip it to bring the tab back
+- **Unit tests** (Jest) — see Testing section below
+
+### 🚧 Not Started
+- AI-powered summaries. The earlier summarization worker code was removed; the Summary tab on `/upload` is still in place but hidden behind `SHOW_SUMMARY = false` in `src/app/upload/page.tsx`
 - Export transcripts and summaries as PDF/Word
 
 ## Environment Setup
@@ -141,8 +147,8 @@ App root — create `.env.local` with:
 1. **Client** (`src/components/upload/uploadFile.tsx`) calls `POST /api/uploads` with the file name. The route creates an `uploads` row (`status: 'uploading'`) and returns `uploadFileId`.
 2. The client splits the file into 10MB chunks (`src/lib/utils/chunkFile.js`) and uploads up to 3 concurrently, each via a signed URL from `POST /api/getSignedUrl` (Supabase Storage bucket `audio-temp`, path `temp/{uploadFileId}/{chunkIndex}-{fileName}`). The route uses the *stored* `file_name`, never the client's, so paths always match what the worker downloads. Any failed chunk rejects, so the merge never starts on an incomplete upload.
 3. The client calls `POST /api/mergeChunk`, which flips the row `uploading` → `queued` (a conditional update, so the same upload can't be queued twice) and enqueues a `merge-chunk` job (Redis/BullMQ, defined inline in the route — there is no separate producer file in `worker/`).
-4. `worker/src/mergeWorker.js` consumes `merge-chunk` jobs: sets `processing`, reassembles the chunks, extracts audio with ffmpeg (mono, 16kHz mp3), uploads to the `merged-audio` bucket, sets `transcribing`, then enqueues a `transcribe` job (`worker/lib/queues/transcribeQueue.js`). The status is set *before* enqueueing so a fast transcribe job can't be overwritten.
-5. `worker/src/transcribeWorker.js` consumes `transcribe` jobs: downloads the merged audio, calls Whisper (`whisper-1`, verbose JSON with segment timestamps), splitting files over the 25MB limit and offsetting/merging segments. It upserts into `transcriptions` (`{ video_id, text, segments }`, `onConflict: 'video_id'`) and sets `completed`. The job is idempotent: it first checks for an existing `transcriptions` row and, if one is there, skips the download/Whisper call entirely and just re-asserts `completed` — a retry after a crash between the insert and the status write costs nothing and can't double-bill.
+4. `processMergeJob` (`worker/src/mergeWorker.js`) consumes `merge-chunk` jobs: sets `processing`, reassembles the chunks, extracts audio with ffmpeg (mono, 16kHz mp3), uploads to the `merged-audio` bucket, sets `transcribing`, then enqueues a `transcribe` job (`worker/lib/queues/transcribeQueue.js`). The status is set *before* enqueueing so a fast transcribe job can't be overwritten.
+5. `processTranscribeJob` (`worker/src/transcribeWorker.js`) consumes `transcribe` jobs: downloads the merged audio, calls Whisper (`whisper-1`, verbose JSON with segment timestamps), splitting files over the 25MB limit and offsetting/merging segments. It upserts into `transcriptions` (`{ video_id, text, segments }`, `onConflict: 'video_id'`) and sets `completed`. The job is idempotent: it first checks for an existing `transcriptions` row and, if one is there, skips the download/Whisper call entirely and just re-asserts `completed` — a retry after a crash between the insert and the status write costs nothing and can't double-bill.
 6. Meanwhile `/upload` polls `GET /api/uploads/{uploadFileId}` every 4s and renders the status. On `completed` the response also carries the transcript, which the Transcript tab renders as `[mm:ss] text`.
 7. Failures: each worker's `failed` handler (`markFailedIfFinal`) sets `failed` + the error message **only after retries are exhausted**, so the UI doesn't flash an error during a retry. Status writes never throw — a failed status update must not make BullMQ redo expensive ffmpeg/Whisper work.
 
@@ -155,17 +161,40 @@ App root — create `.env.local` with:
 - `src/app/api/uploads/route.ts`, `src/app/api/uploads/[uploadFileId]/route.ts`
 - `src/app/api/getSignedUrl/route.ts`, `src/app/api/mergeChunk/route.ts`
 - `src/components/upload/uploadFile.tsx`, `src/lib/utils/chunkFile.js`, `src/app/upload/page.tsx`
-- `worker/src/mergeWorker.js`, `worker/src/transcribeWorker.js`, `worker/lib/uploadStatus.js`
+- `worker/src/index.js`, `worker/src/mergeWorker.js`, `worker/src/transcribeWorker.js`, `worker/lib/uploadStatus.js`
 - `worker/lib/queues/transcribeQueue.js`, `supabase/migrations/`
 
 ### Known gaps
-- All BullMQ queues (`merge-chunk`, `transcribe`, `summarize`) use 3 retry attempts with exponential backoff (30s base delay), so a hard failure takes ~1.5 min to surface in the UI.
-- `summarizeWorker.js` still inserts into `summaries` unconditionally, so a summarize retry after a successful insert would duplicate the row. `transcriptions` was fixed (unique index + upsert + existence check); apply the same pattern when summarization is wired into `worker/src/index.js`.
+- Both BullMQ queues (`merge-chunk`, `transcribe`) use 3 retry attempts with exponential backoff (30s base delay), so a hard failure takes ~1.5 min to surface in the UI.
+- Any new job that writes a row must be retry-safe the way `transcribe` is (unique index + upsert + existence check before the expensive call), or a retry after a successful insert will duplicate it.
 - If the client dies mid-upload, the `uploads` row is left at `uploading` forever (no cleanup job); the `audio-temp` chunks are never deleted either.
 - Polling is simple but chatty — Supabase Realtime on the `uploads` row is the natural upgrade.
+
+## Testing
+
+Two separate Jest setups, because the app is TypeScript/Next and the worker is a plain-ESM package. Tests sit next to the file they test (`foo.ts` → `foo.test.ts`). Every external service is mocked — no test touches Supabase, Redis, OpenAI or ffmpeg.
+
+### App (`jest.config.js`, root)
+- `next/jest` handles TS and the `@/` alias; `testEnvironment: 'node'` (`File`/`Blob`/`fetch`/`Request` are Node globals). `worker/` is ignored.
+- **API routes**: mock `@/lib/supabase/server` and point `createServerSupabaseClient` at `supabaseMock()` from `src/test-utils/supabaseMock.ts`. `queryMock({ data, error })` gives one table's chainable query; its terminal `single`/`maybeSingle` resolves to that result, and every chain call (`insert`, `update`, `eq`, …) is a `jest.fn` you can assert on. Call the exported handler directly (`POST(new NextRequest(url, { method, body }))`).
+- Don't put helpers under `__tests__/` — Jest treats every file there as a test suite.
+- `mergeChunk/route.ts` builds its BullMQ `Queue` at import time, so its test mocks `bullmq`/`ioredis` and grabs the constructor args and instance from `Queue.mock` **at module level**, before `jest.clearAllMocks()` wipes them.
+- `p-queue` and `p-timeout` are ESM-only, so `jest.config.js` swaps next/jest's `/node_modules/` transform-ignore pattern for one that lets them through. The `uploadFile` concurrency test relies on the *real* p-queue limit — don't mock it. Any other ESM-only dependency that tests import needs adding to that pattern.
+
+### Worker (`worker/jest.config.js`)
+- Native ESM, no transform: the `test` script runs Jest under `--experimental-vm-modules`.
+- Import `jest` from `@jest/globals`. Mock with `jest.unstable_mockModule(path, factory)` **before** a top-level `await import('./module.js')` — static imports would load the real module first.
+- Mock `../lib/supabase.js` and, for `transcribeWorker.js`, `openai`: both construct clients at import time and throw without env vars.
+- Processor tests use real temp files (so they can check reassembly order and cleanup). Mocks handed a file stream (Whisper `create`, storage `upload`) must **read it to the end**, like the real clients do. Destroying it unopened races the worker's cleanup and crashes the run with an unhandled `ENOENT`.
+
+CI (`.github/workflows/ci.yml`) runs lint, type-check, `npm test` and build for the app, and `npm test` for the worker, on every PR and on pushes to `master`.
+
+### TypeScript version
+`tsconfig.json` sets `"types": ["node", "jest"]` explicitly. TypeScript 6 (which VS Code bundles) no longer auto-includes `@types/*`, so without this the editor can't see Jest's globals. The project itself still runs TypeScript 5.9; set VS Code to "Use Workspace Version" to match `npm run type-check` (TS 6 also flags the `baseUrl`/`target: es5` deprecations and the `globals.css` side-effect import).
 
 ## Current Status
 
 **Phase 1 Complete:** User authentication system with email verification
 **Phase 2 Complete:** Chunked upload → transcription pipeline, with status tracking and transcript display in the UI (end-to-end, user-visible)
-**Phase 3 In Progress:** Summarization (worker exists, not wired into `worker/src/index.js`; Summary tab hidden behind `SHOW_SUMMARY`) and PDF/Word export
+**Phase 3 Complete:** Unit tests — utils, API routes, the `uploadFile` client, worker helpers and both worker processors, run in CI
+**Not started:** Summarization (earlier worker code removed; Summary tab hidden behind `SHOW_SUMMARY`) and PDF/Word export
