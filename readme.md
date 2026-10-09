@@ -7,7 +7,8 @@ A web application that helps students transcribe (and, soon, summarize) audio/vi
 - ✅ **Authentication** — Supabase Auth with email/password, email verification flow, and middleware-based route protection.
 - ✅ **Upload & Transcription** — chunked upload of large audio/video files, background processing pipeline, and AI transcription via OpenAI Whisper. End-to-end functional.
 - ✅ **Status tracking & transcript display** — each upload's progress through the pipeline is tracked in the database, polled by the upload page, and the finished transcript is rendered as timestamped `[mm:ss] text` lines.
-- 🚧 **Summarization** — `worker/src/summarizeWorker.js` exists but isn't wired into the worker entry point yet, and the Summary tab is hidden behind a `SHOW_SUMMARY` flag.
+- ✅ **Unit tests** — Jest suites for the app (utils, API routes, upload client) and the worker (status helpers, merge and transcribe processors), run in CI on every pull request.
+- 🚧 **Summarization** — planned, not yet built. The Summary tab on the upload page is hidden behind a `SHOW_SUMMARY` flag until then.
 - 🚧 **Export** — PDF/Word export is planned, not yet built.
 
 ## Architecture
@@ -57,13 +58,14 @@ error at the user mid-retry.
 - **Database:** Supabase (PostgreSQL)
 - **Authentication:** Supabase Auth
 - **Storage:** Supabase Storage
-- **AI Services:** OpenAI Whisper API (transcription), GPT-4o-mini (summarization, in progress)
+- **AI Services:** OpenAI Whisper API (transcription)
+- **Testing:** Jest, GitHub Actions CI
 
 ## Getting Started
 
 ### Prerequisites
 
-- Node.js 18+ and npm
+- Node.js 20+ and npm
 - Supabase project
 - OpenAI API key
 - Redis instance (for the job queue)
@@ -88,6 +90,38 @@ npm install && npm run dev        # Next.js app, localhost:3000
 cd worker && npm install && npm start   # background worker (merge + transcribe)
 ```
 
+## Testing
+
+The app and the worker each have their own Jest setup, and each runs its own tests:
+
+```
+npm test                  # app: utils, API routes, chunked upload client
+cd worker && npm test     # worker: status helpers, merge + transcribe processors
+```
+
+The tests need no environment variables or running services: Supabase, Redis, OpenAI and
+ffmpeg are all mocked. Each test file sits next to the file it tests (`foo.ts` → `foo.test.ts`).
+The worker runs Jest in native ESM mode, so a `VM Modules is an experimental feature` warning
+on each run is expected.
+
+What they cover:
+
+- **Upload client** — call order, at most 3 chunks in flight, and no merge if any chunk fails.
+- **API routes** — auth (401), input validation (400), ownership (404), state checks (409), and
+  that signed URLs and merge jobs use the *stored* file name rather than the client's.
+- **Merge worker** — chunks reassembled in order. Status is set to `transcribing` *before* the
+  transcribe job is queued. Temp files are cleaned up on every failure path.
+- **Transcribe worker** — a retry that finds an existing transcript skips Whisper entirely (no
+  double billing). Files over 25MB are split, with timestamps shifted onto the full timeline.
+  The upload is only marked `completed` after the transcript is saved.
+
+CI (`.github/workflows/ci.yml`) runs lint, type-check, tests and a production build for the app,
+plus the worker tests, on every pull request and every push to `master`.
+
+The project uses TypeScript 5.9. If VS Code shows errors that `npm run type-check` doesn't, VS
+Code is probably using its bundled TypeScript 6. Run **TypeScript: Select TypeScript Version →
+Use Workspace Version** to switch it to the project's version.
+
 ## Project Structure
 
 ```
@@ -107,8 +141,9 @@ src/
 ├── contexts/auth.tsx      # auth state/context
 ├── lib/
 │   ├── supabase/          # browser + server Supabase clients
-│   └── utils/              # file chunking/validation helpers
+│   └── utils/              # file chunking/validation, transcript timestamp formatting
 ├── middleware.ts           # route protection
+├── test-utils/             # fake Supabase client shared by the API route tests
 └── types/                  # pipeline status, upload record, transcript types
 
 supabase/
@@ -116,10 +151,9 @@ supabase/
 
 worker/
 ├── src/
-│   ├── index.js            # boots the merge + transcribe workers
-│   ├── mergeWorker.js       # reassembles chunks, extracts audio (ffmpeg)
-│   ├── transcribeWorker.js  # calls OpenAI Whisper, stores the transcript
-│   └── summarizeWorker.js   # summarization (in progress, not booted yet)
+│   ├── index.js            # creates the BullMQ merge + transcribe workers
+│   ├── mergeWorker.js       # merge job: reassembles chunks, extracts audio (ffmpeg)
+│   └── transcribeWorker.js  # transcribe job: calls OpenAI Whisper, stores the transcript
 └── lib/
     ├── redis.js, supabase.js
     ├── uploadStatus.js       # status updates for the `uploads` table
@@ -149,4 +183,4 @@ worker/
 - Authenticated routes protected via Next.js middleware; unauthenticated `/api/*` calls get a
   401 JSON response rather than a redirect to HTML. Each upload route re-verifies the user and
   checks row ownership itself.
-- File uploads validated for type and size (100MB max; mp3/wav/m4a/mp4) before upload begins
+- File uploads validated for type and size (100MB max, not empty; mp3/wav/m4a/mp4) before upload begins
