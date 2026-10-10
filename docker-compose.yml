@@ -1,0 +1,48 @@
+# Runs the whole Notesum stack locally, the same way it will run on AWS:
+#   redis  -> stands in for ElastiCache
+#   worker -> will become an ECS Fargate service
+#   web    -> will become an ECS Fargate service behind a load balancer
+#
+# Start it with:
+#   docker compose --env-file .env.local up --build
+# (--env-file lets compose fill in the ${NEXT_PUBLIC_...} build args below)
+
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"   # optional: lets you inspect Redis from your laptop
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 5
+
+  worker:
+    build: ./worker
+    env_file: ./worker/.env
+    environment:
+      # Overrides the value in worker/.env: inside compose, Redis is
+      # reached by its service name, not localhost.
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      args:
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+        NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL}
+    env_file: ./.env.local
+    environment:
+      REDIS_URL: redis://redis:6379
+    ports:
+      - "3000:3000"
+    depends_on:
+      redis:
+        condition: service_healthy
+      worker:
+        condition: service_started
